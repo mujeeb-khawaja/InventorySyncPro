@@ -308,6 +308,27 @@ def read_ovl_stock_data(file_path):
             ovl_data[sku_clean] = in_stock_clean
     return ovl_data
 
+def read_swains_stock_data(file_path):
+    """
+    Reads Swains stock data from the "product_details_with_additional_features.xlsx" file.
+    Returns a dictionary with SKU as keys (from column I "Man.prod.code")
+    and quantities as values (from column G "Pack Quantity").
+    """
+    swains_data = {}
+    wb_swains = load_workbook(file_path)
+    ws_swains = wb_swains.active
+    # Assuming row 1 is header, iterate from row 2 onward.
+    for row in ws_swains.iter_rows(min_row=2, values_only=True):
+        sku = row[8]  # Column I (0-indexed 8)
+        qty = row[6]  # Column G (0-indexed 6)
+        if sku:
+            try:
+                quantity = int(qty) if qty and str(qty).isdigit() else 0
+            except ValueError:
+                quantity = 0
+            swains_data[str(sku).strip()] = quantity
+    return swains_data
+
 def main():
 
     # Read MIC095_STOCK.csv
@@ -419,13 +440,25 @@ def main():
         # Process OVL scenario
         print("Processing OVL scenario")
         ovl_stock_data = read_ovl_stock_data("Stock lndication List 14.02.25.xlsx")
-        results_ovl = process_worksheet(ws_daily, "OVL", "", ovl_stock_data, "OVL")
+        results_ovl = process_worksheet(ws_daily, "OVL", "Swains", ovl_stock_data, "OVL")
         if results_ovl:
             # Write "OVL" bold heading
             ws_new.append(["OVL"])
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)
             # Append OVL results
             for item in results_ovl:
+                ws_new.append(list(item))
+
+        # Process Swains scenario
+        print("Processing Swains scenario")
+        swains_stock_data = read_swains_stock_data("product_details_with_additional_features.xlsx")
+        results_swains = process_worksheet(ws_daily, "Swains", "", swains_stock_data, "Swains")
+        if results_swains:
+            # Write "Swains" bold heading
+            ws_new.append(["Swains"])
+            ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)
+            # Append Swains results
+            for item in results_swains:
                 ws_new.append(list(item))
 
         # Apply conditional formatting based on Status in Column B ("Status")
