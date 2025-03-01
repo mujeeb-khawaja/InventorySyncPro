@@ -223,6 +223,40 @@ def process_worksheet(ws, start_keyword, stop_keyword, stock_data_dict, scenario
                     print(f"OVL SKU: {sku_key} not found in stock data.")
                 continue
 
+            # Branch for SWAINS scenario
+            if scenario == "Swains":
+                # Look up the stock status string from swains_data_dict
+                swains_status = stock_data_dict.get(sku, "")
+
+                # Classify by color
+                if color_class == "green":
+                    if swains_status == "Available for special order":
+                        results.append((sku, "Add", "", "Available for special order"))
+                    elif swains_status == "Awaiting stock":
+                        results.append((sku, "Remove", "", "Awaiting stock"))
+                    elif swains_status == "End of line, limited stock":
+                        results.append((sku, "Remove", "", "End of line, limited stock"))
+                    elif swains_status == "In stock":
+                        # Skip entirely (no row added)
+                        pass
+                    elif swains_status == "Limited stock":
+                        results.append((sku, "Limited stock", ""))
+                
+                elif color_class == "red":
+                    if swains_status == "Available for special order":
+                        results.append((sku, "Available for special order", ""))
+                    elif swains_status == "Awaiting stock":
+                        results.append((sku, "Awaiting stock", ""))
+                    elif swains_status == "End of line, limited stock":
+                        results.append((sku, "Add", "", "End of line, limited stock"))
+                    elif swains_status == "In stock":
+                        results.append((sku, "Add", ""))
+                    elif swains_status == "Limited stock":
+                        results.append((sku, "Add", "", "Limited stock"))
+
+                # Do not proceed with the default logic if scenario is Swains
+                continue
+
             in_stock_file = sku in stock_data_dict
             quantity = stock_data_dict[sku] if in_stock_file else 0
 
@@ -311,22 +345,19 @@ def read_ovl_stock_data(file_path):
 def read_swains_stock_data(file_path):
     """
     Reads Swains stock data from the "product_details_with_additional_features.xlsx" file.
-    Returns a dictionary with SKU as keys (from column I "Man.prod.code")
-    and quantities as values (from column G "Pack Quantity").
+    Returns a dictionary with SKU (column I) as keys and Stock Status (column J) as values.
     """
     swains_data = {}
     wb_swains = load_workbook(file_path)
     ws_swains = wb_swains.active
-    # Assuming row 1 is header, iterate from row 2 onward.
+
     for row in ws_swains.iter_rows(min_row=2, values_only=True):
-        sku = row[8]  # Column I (0-indexed 8)
-        qty = row[6]  # Column G (0-indexed 6)
+        # Column I = index 8, Column J = index 9
+        sku = row[8]
+        status_text = row[9]  # e.g. "Available for special order", "Awaiting stock", etc.
         if sku:
-            try:
-                quantity = int(qty) if qty and str(qty).isdigit() else 0
-            except ValueError:
-                quantity = 0
-            swains_data[str(sku).strip()] = quantity
+            swains_data[str(sku).strip()] = str(status_text).strip() if status_text else ""
+
     return swains_data
 
 def main():
