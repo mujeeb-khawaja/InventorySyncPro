@@ -245,8 +245,6 @@ def process_worksheet(ws, start_keyword, stop_keyword, stock_data_dict, scenario
                 elif color_class == "red":
                     if swains_status == "Available for special order":
                         results.append((sku, "Available for special order", ""))
-                    elif swains_status == "Awaiting stock":
-                        results.append((sku, "Awaiting stock", ""))
                     elif swains_status == "End of line, limited stock":
                         results.append((sku, "Add", "", "End of line, limited stock"))
                     elif swains_status == "In stock":
