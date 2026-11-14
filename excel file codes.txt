@@ -1,0 +1,257 @@
+import csv
+import math
+import os
+from openpyxl import load_workbook, Workbook
+from openpyxl.styles import Font
+import chardet
+import xlwings as xw
+import tempfile
+
+# --- Configuration ---
+stock_file = "MIC095_STOCK.csv"
+customerfsar_file = "CustomerFSAR.csv"
+daily_order_file = "DAILY ORDER LISTS OF SUPPLIER 21-4-21.xlsb"  # Updated to .xlsb
+output_file = "Updated_file.xlsx"  # Changed to avoid space issues
+
+SKU_COL_DAILY = 'E'
+SUPPLIER_COL = 'F'
+STATUS_COL = 'H'
+QUANTITY_COL_NAME = "Quantity"
+SUPPLIER_KEYWORD = "DIREKTEK"
+STOP_KEYWORD = "VORTEX CSW VIRTUAL LIST "
+
+green_samples = [(0, 255, 0), (0, 224, 128), (0, 255, 128)]
+red_samples = [(255, 0, 0), (224, 0, 0), (255, 32, 32)]
+
+def average_color(colors):
+    r = sum(c[0] for c in colors) / len(colors)
+    g = sum(c[1] for c in colors) / len(colors)
+    b = sum(c[2] for c in colors) / len(colors)
+    return (r, g, b)
+
+green_centroid = average_color(green_samples)
+red_centroid = average_color(red_samples)
+
+def color_distance(c1, c2):
+    return math.sqrt((c1[0]-c2[0])**2 + (c1[1]-c2[1])**2 + (c1[2]-c2[2])**2)
+
+def classify_color(rgb):
+    dist_green = color_distance(rgb, green_centroid)
+    dist_red = color_distance(rgb, red_centroid)
+    return "green" if dist_green < dist_red else "red"
+
+def get_rgb_from_cell(cell):
+    fill = cell.fill
+    if fill and fill.start_color and fill.start_color.rgb and isinstance(fill.start_color.rgb, str):
+        color = fill.start_color.rgb
+        if len(color) == 8:
+            color = color[2:]  # Remove alpha channel if present
+        try:
+            r = int(color[0:2], 16)
+            g = int(color[2:4], 16)
+            b = int(color[4:6], 16)
+            return (r, g, b)
+        except ValueError:
+            pass  # In case of invalid color format
+    return (255, 255, 255)  # Default to white if color not found or invalid
+
+def convert_xlsb_to_xlsx(xlsb_path):
+    """
+    Converts an .xlsb file to .xlsx format using xlwings and returns the path to the temporary .xlsx file.
+    The temporary file is deleted after processing.
+    """
+    # Create a temporary file with .xlsx suffix
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".xlsx") as tmp:
+        xlsx_path = tmp.name
+    # Initialize xlwings Excel application
+    app = xw.App(visible=False)
+    try:
+        # Open the .xlsb workbook
+        wb = app.books.open(xlsb_path)
+        # Save it as .xlsx to the temporary path
+        wb.save(xlsx_path)
+        wb.close()
+    finally:
+        # Quit the Excel application
+        app.quit()
+    return xlsx_path
+
+def read_stock_data(stock_file_path, sku_key="SKU"):
+    """
+    Reads stock data from a CSV file and returns a dictionary with SKU as keys and quantities as values.
+    """
+    stock_data = {}
+    with open(stock_file_path, 'r', newline='', encoding='utf-8') as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            sku = row[sku_key].strip() if sku_key in row else None
+            qty_str = row[QUANTITY_COL_NAME].strip() if QUANTITY_COL_NAME in row else "0"
+            if sku:
+                try:
+                    quantity = int(qty_str) if qty_str.isdigit() else 0
+                except ValueError:
+                    quantity = 0
+                stock_data[sku] = quantity
+    return stock_data
+
+def detect_encoding(file_path):
+    """
+    Detects the encoding of a given file using chardet.
+    """
+    with open(file_path, 'rb') as f:
+        result = chardet.detect(f.read())
+    return result['encoding'] if result['encoding'] else 'cp1252'
+
+def process_worksheet(ws, start_keyword, stop_keyword, stock_data_dict, scenario):
+    """
+    Processes a worksheet to determine stock actions based on SKU, status, and stock data.
+    Returns a list of tuples containing SKU, Status, and Quantity.
+    
+    Parameters:
+    - ws: The worksheet object to process.
+    - start_keyword: Keyword indicating where to start processing.
+    - stop_keyword: Keyword indicating where to stop processing.
+    - stock_data_dict: Dictionary containing SKU and their corresponding stock quantities.
+    - scenario: Identifier for the scenario ("CustomerFSAR" or "MIC095").
+    """
+    start_keyword = start_keyword.strip().lower()
+    stop_keyword = stop_keyword.strip().lower()
+
+    # Find start row
+    start_row_idx = None
+    for i, row in enumerate(ws.iter_rows(min_row=1, values_only=True), start=1):
+        cell_value = str(row[5]).strip().lower() if row[5] else ""
+        if start_keyword in cell_value:
+            start_row_idx = i + 1
+            break
+    if start_row_idx is None:
+        return []
+
+    # Find end row
+    end_row_idx = None
+    for i, row in enumerate(ws.iter_rows(min_row=start_row_idx, values_only=True), start=start_row_idx):
+        cell_value = str(row[5]).strip().lower() if row[5] else ""
+        if stop_keyword in cell_value:
+            end_row_idx = i - 1
+            break
+    if end_row_idx is None:
+        end_row_idx = ws.max_row
+
+    results = []
+    for i in range(start_row_idx, end_row_idx + 1):
+        sku_cell = ws[SKU_COL_DAILY + str(i)]
+        status_cell = ws[STATUS_COL + str(i)]
+
+        sku = sku_cell.value
+        if sku is None:
+            continue
+        sku = str(sku).strip()
+
+        h_value = status_cell.value
+        if h_value and str(h_value).strip().upper() == "VIRTUAL":
+            rgb = get_rgb_from_cell(status_cell)
+            color_class = classify_color(rgb)
+
+            in_stock_file = sku in stock_data_dict
+            quantity = stock_data_dict[sku] if in_stock_file else 0
+
+            # *** New Condition Implementation ***
+            if scenario == "CustomerFSAR":
+                if color_class == "red" and not in_stock_file:
+                    # Do not include this SKU in the results
+                    continue
+
+            if in_stock_file:
+                if color_class == "green":
+                    if quantity == 0:
+                        results.append((sku, "Remove", ""))
+                    elif quantity < 5:
+                        results.append((sku, "Low Stock", quantity))
+                    # quantity >= 5 -> do nothing
+                elif color_class == "red":
+                    if quantity > 0:
+                        results.append((sku, "Add", ""))
+            else:
+                results.append((sku, "Remove", ""))
+
+    return results
+
+def main():
+    # Read MIC095_STOCK.csv
+    print("Reading MIC095_STOCK.csv")
+    mic095_stock_data = read_stock_data(stock_file, sku_key="SKU")
+
+    # Read CustomerFSAR.csv
+    print("Reading CustomerFSAR.csv")
+    customerfsar_encoding = detect_encoding(customerfsar_file)
+    customerfsar_stock_data = {}
+    with open(customerfsar_file, 'r', newline='', encoding=customerfsar_encoding) as csvfile:
+        reader = csv.DictReader(csvfile)
+        for row in reader:
+            product_code = row["Product Code"].strip() if "Product Code" in row else None
+            qty_str = row["Stock Qty"].strip() if "Stock Qty" in row else "0"
+            if product_code:
+                try:
+                    quantity = int(qty_str) if qty_str.isdigit() else 0
+                except ValueError:
+                    quantity = 0
+                customerfsar_stock_data[product_code] = quantity
+
+    # Convert .xlsb to .xlsx temporarily
+    print("Converting .xlsb to .xlsx in memory")
+    xlsx_temp_path = convert_xlsb_to_xlsx(daily_order_file)
+
+    try:
+        # Load the converted .xlsx workbook
+        wb_daily = load_workbook(xlsx_temp_path)
+
+        ws_daily = wb_daily.active
+
+        # Process CustomerFSAR scenario
+        print("Processing CustomerFSAR scenario")
+        results_customer = process_worksheet(ws_daily, "BUSHNELL", "DIREKTEK", customerfsar_stock_data, "CustomerFSAR")
+
+        # Process MIC095 scenario
+        print("Processing MIC095 scenario")
+        results_mic095 = process_worksheet(ws_daily, SUPPLIER_KEYWORD, STOP_KEYWORD, mic095_stock_data, "MIC095")
+
+        # Combine results
+        results = results_customer + results_mic095
+
+        # Create a new workbook for results
+        wb_new = Workbook()
+        ws_new = wb_new.active
+        ws_new.title = "Results"
+        ws_new.append(["SKU", "Status", "Quantity"])
+
+        # Bold the header row
+        for cell in ws_new[1]:
+            cell.font = Font(bold=True)
+
+        # Append results
+        for item in results:
+            ws_new.append(list(item))
+
+        # Apply conditional formatting based on Status
+        for row in ws_new.iter_rows(min_row=2, min_col=2, max_col=2):
+            cell = row[0]
+            status_value = cell.value
+            if status_value == "Low Stock":
+                cell.font = Font(color="FFCC9900")  # Orange
+            elif status_value == "Add":
+                cell.font = Font(color="FF00FF00")  # Green
+            elif status_value == "Remove":
+                cell.font = Font(color="FFFF0000")  # Red
+
+        # Save the results workbook
+        wb_new.save(output_file)
+        print(f"Processing complete. Results saved in '{output_file}'.")
+
+    finally:
+        # Clean up temporary .xlsx file
+        if os.path.exists(xlsx_temp_path):
+            os.remove(xlsx_temp_path)
+            print("Temporary file deleted.")
+
+if __name__ == "__main__":
+    main()
