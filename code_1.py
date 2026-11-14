@@ -107,6 +107,31 @@ def convert_xlsb_to_xlsx(xlsb_path):
         app.quit()
     return xlsx_path
 
+
+def build_product_metadata(ws):
+    """
+    Builds a dictionary mapping SKU/MPN to a tuple of (Name, Price, Comment).
+    Assumes:
+        - SKU/MPN: Column E
+        - Name: Column F
+        - Price: Column G
+        - Comment: Column J
+    """
+    metadata = {}
+    for row in ws.iter_rows(min_row=2):  # Assuming first row is header
+        sku_cell = row[4]  # Column E
+        name_cell = row[5]  # Column F
+        price_cell = row[6]  # Column G
+        comment_cell = row[11] if len(row) > 9 else None  # Column J
+
+        if sku_cell.value:
+            sku = str(sku_cell.value).strip()
+            name = str(name_cell.value).strip() if name_cell and name_cell.value else ''
+            price = str(price_cell.value).strip() if price_cell and price_cell.value else ''
+            comment = str(comment_cell.value).strip() if comment_cell and comment_cell.value else ''
+            metadata[sku] = (name, price, comment)
+    return metadata
+
 def read_stock_data(stock_file_path, sku_key="SKU"):
     """
     Reads stock data from a CSV file and returns a dictionary with SKU as keys and quantities as values.
@@ -395,11 +420,14 @@ def main():
         wb_daily = load_workbook(xlsx_temp_path)
         ws_daily = wb_daily.active
 
+        # Build product metadata lookup (Name, Price, Comment)
+        product_metadata = build_product_metadata(ws_daily)
+
         # Create a new workbook for results
         wb_new = Workbook()
         ws_new = wb_new.active
         ws_new.title = "Results"
-        ws_new.append(["SKU", "Status", "Quantity"])  # Header row for SKUs
+        ws_new.append(["SKU", "Status", "Quantity", "", "Product Name", "Price", "Comment"])  # Updated header row
 
         # Bold the header row for SKUs
         for cell in ws_new[1]:
@@ -414,7 +442,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)  # Apply bold font to supplier name
             # Append CustomerFSAR results
             for item in results_customer:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Process MIC095 scenario
         print("Processing MIC095 scenario")
@@ -425,7 +460,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)  # Apply bold font to supplier name
             # Append MIC095 results
             for item in results_mic095:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Process CSW Products scenario
         print("Processing CSW Products scenario")
@@ -436,7 +478,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)  # Apply bold font to supplier name
             # Append CSW results
             for item in results_csw:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Process Optical Hardware scenario
         print("Processing Optical Hardware scenario")
@@ -466,7 +515,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)  # Apply bold font to supplier name
             # Append Optical Hardware results
             for item in results_optical:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Process OVL scenario
         print("Processing OVL scenario")
@@ -478,7 +534,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)
             # Append OVL results
             for item in results_ovl:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Process Swains scenario
         print("Processing Swains scenario")
@@ -490,7 +553,14 @@ def main():
             ws_new["A" + str(ws_new.max_row)].font = Font(bold=True)
             # Append Swains results
             for item in results_swains:
-                ws_new.append(list(item))
+                row_data = list(item)
+                sku_key = row_data[0]  # First item is the SKU
+                name, price, comment = product_metadata.get(sku_key, ("", "", ""))
+                # Fill in missing columns if row is short (e.g., no "Low Stock" column)
+                while len(row_data) < 4:
+                    row_data.append("")
+                row_data.extend([name, price, comment])
+                ws_new.append(row_data)
 
         # Apply conditional formatting based on Status in Column B ("Status")
         for row in ws_new.iter_rows(min_row=2, min_col=2, max_col=2):  # Column B ("Status")
